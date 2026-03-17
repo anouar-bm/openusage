@@ -8,6 +8,13 @@ See your usage at a glance from your menu bar. No digging through dashboards.
 
 [**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS, Apple Silicon & Intel)
 
+Or install with Homebrew:
+
+```bash
+brew tap robinebers/openusage
+brew install openusage
+```
+
 The app auto-updates. Install once and you're set.
 
 ## What It Does
