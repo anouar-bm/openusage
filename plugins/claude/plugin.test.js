@@ -1325,17 +1325,18 @@ describe("claude plugin", () => {
       status: 200,
       bodyText: JSON.stringify({ five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00.000Z" } }),
     })
+    const make2xResp = (data) => ({ status: 200, bodyText: JSON.stringify(data) })
+    const mockRequests = (ctx, data2x) => {
+      ctx.host.http.request.mockImplementation((opts) =>
+        opts.url.includes("isclaude2x.com") ? make2xResp(data2x) : makeUsageResp()
+      )
+    }
 
-    beforeEach(() => { vi.useFakeTimers() })
-    afterEach(() => { vi.useRealTimers() })
-
-    it("shows green 2x badge during promo weekend", async () => {
-      // 2026-03-14 is Saturday; 15:00 UTC = 11 AM ET — off-peak, weekend → 2x active
-      vi.setSystemTime(new Date("2026-03-14T15:00:00.000Z"))
+    it("shows green 2x badge when API reports is2x: true", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: true, promoActive: true, "2xWindowExpiresIn": "45h 00m 00s" })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       const badge = result.lines.find((l) => l.label === "2x active")
@@ -1343,13 +1344,11 @@ describe("claude plugin", () => {
       expect(badge.color).toBe("#22c55e")
     })
 
-    it("shows green 2x badge during promo weekday off-peak", async () => {
-      // 2026-03-17 is Tuesday; 20:00 UTC = 4 PM ET — after peak window → 2x active
-      vi.setSystemTime(new Date("2026-03-17T20:00:00.000Z"))
+    it("shows green 2x badge during weekday off-peak when API reports is2x: true", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: true, promoActive: true, "2xWindowExpiresIn": "2h 00m 00s" })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       const badge = result.lines.find((l) => l.label === "2x active")
@@ -1357,13 +1356,11 @@ describe("claude plugin", () => {
       expect(badge.color).toBe("#22c55e")
     })
 
-    it("shows amber Peak hours badge during promo weekday peak hours (12–18 UTC)", async () => {
-      // 2026-03-17 is Tuesday; 14:00 UTC = 10 AM ET — within peak window
-      vi.setSystemTime(new Date("2026-03-17T14:00:00.000Z"))
+    it("shows amber Peak hours badge when API reports is2x: false", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: false, promoActive: true, "standardWindowExpiresIn": "4h 00m 00s" })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       const badge = result.lines.find((l) => l.label === "Peak hours")
@@ -1372,70 +1369,65 @@ describe("claude plugin", () => {
       expect(result.lines.find((l) => l.label === "2x active")).toBeUndefined()
     })
 
-    it("shows no 2x badge after promo ends", async () => {
-      // 2026-03-29 — after promo end (2026-03-28T04:00Z)
-      vi.setSystemTime(new Date("2026-03-29T12:00:00.000Z"))
+    it("shows no 2x badge when API reports promoActive: false", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: false, promoActive: false })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       expect(result.lines.find((l) => l.label === "2x active")).toBeUndefined()
       expect(result.lines.find((l) => l.label === "Peak hours")).toBeUndefined()
     })
 
-    it("shows no 2x badge before promo starts", async () => {
-      // 2026-03-12 — before promo start (2026-03-13T04:00Z)
-      vi.setSystemTime(new Date("2026-03-12T12:00:00.000Z"))
+    it("shows no 2x badge when 2x API request fails", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      ctx.host.http.request.mockImplementation((opts) =>
+        opts.url.includes("isclaude2x.com") ? { status: 500, bodyText: "" } : makeUsageResp()
+      )
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       expect(result.lines.find((l) => l.label === "2x active")).toBeUndefined()
       expect(result.lines.find((l) => l.label === "Peak hours")).toBeUndefined()
     })
 
-    it("still shows 'No usage data' alongside 2x badge when API returns no usage", async () => {
-      // Promo active weekend, API returns no usage data → 2x badge + "No usage data" both shown
-      vi.setSystemTime(new Date("2026-03-14T15:00:00.000Z")) // Saturday off-peak → 2x active
+    it("still shows 'No usage data' alongside 2x badge when usage API returns no data", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue({ status: 200, bodyText: JSON.stringify({}) })
+      ctx.host.http.request.mockImplementation((opts) =>
+        opts.url.includes("isclaude2x.com")
+          ? make2xResp({ is2x: true, promoActive: true, "2xWindowExpiresIn": "1h 00m 00s" })
+          : { status: 200, bodyText: JSON.stringify({}) }
+      )
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       expect(result.lines.find((l) => l.label === "2x active")).toBeTruthy()
       expect(result.lines.find((l) => l.label === "Status" && l.text === "No usage data")).toBeTruthy()
     })
 
-    it("includes countdown text in 2x active badge", async () => {
-      // 2026-03-14 Saturday 15:00 UTC; next weekday peak = Monday 2026-03-16 12:00 UTC
-      // delta = 2026-03-16T12:00Z - 2026-03-14T15:00Z = 45h → "45h 00m"
-      vi.setSystemTime(new Date("2026-03-14T15:00:00.000Z"))
+    it("includes countdown text from API in 2x active badge", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: true, promoActive: true, "2xWindowExpiresIn": "45h 00m 00s" })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       const badge = result.lines.find((l) => l.label === "2x active")
-      expect(badge.text).toMatch(/^ends in \d+h \d{2}m$/)
+      expect(badge.text).toBe("ends in 45h 00m 00s")
     })
 
-    it("includes countdown text in Peak hours badge", async () => {
-      // 2026-03-17 Tuesday 14:00 UTC; peak ends at 18:00 UTC → 4h remaining → "4h 00m"
-      vi.setSystemTime(new Date("2026-03-17T14:00:00.000Z"))
+    it("includes countdown text from API in Peak hours badge", async () => {
       const ctx = makeCtx()
       ctx.host.fs.exists = () => true
       ctx.host.fs.readText = () => makeCreds()
-      ctx.host.http.request.mockReturnValue(makeUsageResp())
+      mockRequests(ctx, { is2x: false, promoActive: true, "standardWindowExpiresIn": "4h 00m 00s" })
       const plugin = await loadPlugin()
       const result = plugin.probe(ctx)
       const badge = result.lines.find((l) => l.label === "Peak hours")
-      expect(badge.text).toBe("2x in 4h 00m")
+      expect(badge.text).toBe("2x in 4h 00m 00s")
     })
   })
 })
