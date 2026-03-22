@@ -390,6 +390,24 @@
     }))
   }
 
+  // --- Claude 2x Promo Banner ---
+  // TEMPORARY: Remove this block after promo ends.
+  let _2xCache = null
+  function get2xStatus(ctx) {
+    const nowMs = Date.now()
+    if (_2xCache && nowMs < _2xCache.expiresAt) return _2xCache.data
+    try {
+      const resp = ctx.util.request({ method: "GET", url: "https://isclaude2x.com/json", timeoutMs: 3000 })
+      const data = resp.status === 200 ? ctx.util.tryParseJson(resp.bodyText) : null
+      _2xCache = { data, expiresAt: nowMs + 5 * 60 * 1000 }
+      return data
+    } catch {
+      _2xCache = { data: null, expiresAt: nowMs + 5 * 60 * 1000 }
+      return null
+    }
+  }
+  // --- End 2x Promo Banner ---
+
   function probe(ctx) {
     const creds = loadCredentials(ctx)
     if (!creds || !creds.oauth || !creds.oauth.accessToken || !creds.oauth.accessToken.trim()) {
@@ -457,6 +475,17 @@
     }
 
     const lines = []
+
+    // TEMPORARY: 2x promo badge — remove after promo ends
+    const status2x = get2xStatus(ctx)
+    if (status2x && status2x.promoActive) {
+      if (status2x.is2x) {
+        lines.push(ctx.line.badge({ label: "2x active", text: "ends in " + (status2x["2xWindowExpiresIn"] ?? "\u2014"), color: "#22c55e" }))
+      } else {
+        lines.push(ctx.line.badge({ label: "Peak hours", text: "2x in " + (status2x["standardWindowExpiresIn"] ?? "\u2014"), color: "#f59e0b" }))
+      }
+    }
+
     let plan = null
     if (creds.oauth.subscriptionType) {
       const basePlan = ctx.fmt.planLabel(creds.oauth.subscriptionType)
@@ -565,7 +594,8 @@
       }
     }
 
-    if (lines.length === 0) {
+    const hasUsageData = lines.some((l) => l.type !== "badge")
+    if (!hasUsageData) {
       lines.push(ctx.line.badge({ label: "Status", text: "No usage data", color: "#a3a3a3" }))
     }
 
